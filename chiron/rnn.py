@@ -19,13 +19,14 @@ def rnn_layers(x,seq_length,training,hidden_num=100,layer_num = 3,class_n = 5):
         #cell_fw = BNLSTMCell(hidden_num,training = training)#,training)
         #cell_bw = BNLSTMCell(hidden_num,training = training)#,training)
         cell_fw = LSTMCell(hidden_num)
-	cell_bw = LSTMCell(hidden_num)
-	cells_fw.append(cell_fw)
+        cell_bw = LSTMCell(hidden_num)
+        cells_fw.append(cell_fw)
         cells_bw.append(cell_bw)
     with tf.variable_scope('BDLSTM_rnn') as scope:
         lasth,_,_=stack_bidirectional_dynamic_rnn(cells_fw = cells_fw,cells_bw=cells_bw,\
                                                 inputs = x,sequence_length = seq_length,dtype = tf.float32,scope=scope)
     #shape of lasth [batch_size,max_time,hidden_num*2]
+
     batch_size = lasth.get_shape().as_list()[0]
     max_time = lasth.get_shape().as_list()[1]
     with tf.variable_scope('rnn_fnn_layer'):
@@ -56,6 +57,6 @@ def rnn_layers_one_direction(x,seq_length,training,hidden_num=200,layer_num = 3,
         lasth_rs = tf.reshape(lasth,[batch_size*max_time,hidden_num],name = 'lasth_rs')
         logits = tf.reshape(tf.nn.bias_add(tf.matmul(lasth_rs,weight_class),bias_class),[batch_size,max_time,class_n],name = "rnn_logits_rs")
     return logits
-    
-    
-    
+
+
+

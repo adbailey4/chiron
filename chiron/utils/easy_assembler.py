@@ -38,8 +38,9 @@ def add_count(concensus,start_indx,segment):
 
 def main():
     bpreads = ['AAGGCCTAGCT','AGGCCTAGCAA','GGCCTAGCTC','AAAGGCCTAGT']
-    census,length = simple_assembly(bpreads)
+    census = simple_assembly(bpreads)
+    print census
     result = np.argmax(census,axis=0)
-    print result
+    print(result)
 if __name__=='__main__':
     main()

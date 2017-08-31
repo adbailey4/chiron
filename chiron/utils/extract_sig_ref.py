@@ -43,7 +43,7 @@ def extract(FLAGS):
             if len(reference)>0:
                 ref_file = open(os.path.join(ref_folder,os.path.splitext(file_n)[0]+'_ref.fasta'),'w+')
                 ref_file.write(reference)
-	    print("Extracted "+(os.path.join(raw_folder,os.path.splitext(file_n)[0]+'.signal')))
+        print("Extracted "+(os.path.join(raw_folder,os.path.splitext(file_n)[0]+'.signal')))
 def extract_file(input_file):
     try:
         input_data = h5py.File(input_file, 'r')    
