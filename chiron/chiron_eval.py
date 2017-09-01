@@ -14,14 +14,13 @@ from cnn import getcnnfeature
 # from cnn import getcnnlogit
 from rnn import rnn_layers
 from utils.unix_time import unix_time
-
+from nanotensor.chiron_data_prep import cat_files, align_to_reference, get_summary_alignment_stats
+from nanotensor.utils import list_dir
 
 def inference(x, seq_length, training):
     cnn_feature = getcnnfeature(x, training=training)
     feashape = cnn_feature.get_shape().as_list()
-    print(type(FLAGS.segment_len))
-
-    ratio = 100 / feashape[1]
+    ratio = FLAGS.segment_len / feashape[1]
     # ratio = int(ratio)
     # print("ratio", ratio)
     logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=5)
@@ -38,13 +37,13 @@ def sparse2dense(predict_val):
     for i in range(len(predict_val_top5)):
         predict_val = predict_val_top5[i]
         unique, pre_counts = np.unique(predict_val.indices[:, 0], return_counts=True)
-        print("UNIQUE, Precounts", unique, pre_counts, predict_val.indices[:, 0])
+        # print("UNIQUE, Precounts", unique, pre_counts, predict_val.indices[:, 0])
         pos_predict = 0
         predict_read_temp = list()
         # print("predict_val.values", predict_val.values)
         for indx, counts in enumerate(pre_counts):
-            print(indx, pre_counts[indx], pos_predict)
-            print(predict_val.values[pos_predict:pos_predict + pre_counts[indx]])
+            # print(indx, pre_counts[indx], pos_predict)
+            # print(predict_val.values[pos_predict:pos_predict + pre_counts[indx]])
             predict_read_temp.append(predict_val.values[pos_predict:pos_predict + pre_counts[indx]])
             pos_predict += pre_counts[indx]
         predict_read.append(predict_read_temp)
@@ -152,9 +151,9 @@ def evaluation():
             path_meta = os.path.join(meta_folder, file_pre + '.meta')
             with open(path_reads, 'w+') as out_f, open(path_con, 'w+') as out_con:
                 for indx, read in enumerate(bpreads):
-                    out_f.write(file_pre + str(indx) + '\n')
+                    out_f.write('>' + file_pre + str(indx) + '\n')
                     out_f.write(read + '\n')
-                out_con.write("{}\n{}".format(file_pre, c_bpread))
+                out_con.write(">{}\n{}\n".format(file_pre, c_bpread))
             with open(path_meta, 'w+') as out_meta:
                 total_time = time.time() - start_time
                 output_time = total_time - assembly_time
@@ -171,12 +170,24 @@ def evaluation():
                 out_meta.write("# input_name model_name\n")
                 out_meta.write("%s %s\n" % (FLAGS.input, FLAGS.model))
 
+    if FLAGS.summary_stats:
+        fasta_files = list_dir(result_folder, ext="fasta")
+        output = os.path.join(result_folder, "all_files.fasta")
+        path = cat_files(fasta_files, output)
+        bam = align_to_reference(path, FLAGS.reference_genome,
+                                 "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/test2.bam", threads=FLAGS.threads)
+        data = get_summary_alignment_stats(bam, FLAGS.reference_genome, report_all=True)
+        data_file = os.path.join(meta_folder, "alignment.meta")
+        with open(data_file, 'w+') as out_f:
+            out_f.write(data)
+
+# result_folder
 
 def run(args):
     global FLAGS
     FLAGS = args
     time_dict = unix_time(evaluation)
-    print(FLAGS.output)
+    # print(FLAGS.output)
     print('Real time:%5.3f Systime:%5.3f Usertime:%5.3f' % (time_dict['real'], time_dict['sys'], time_dict['user']))
     meta_folder = os.path.join(FLAGS.output, 'meta')
     if os.path.isdir(FLAGS.input):
@@ -202,5 +213,8 @@ if __name__ == "__main__":
     parser.add_argument('-l', '--segment_len', type=int, default=300, help="Segment length to be divided into.")
     parser.add_argument('-j', '--jump', type=int, default=30, help="Step size for segment")
     parser.add_argument('-t', '--threads', type=int, default=0, help="Threads number")
+    parser.add_argument('--summary_stats', type=bool, default=False, help="Output summary stats for base-called data")
+    parser.add_argument('--reference_genome', help="Reference genome")
+
     args = parser.parse_args(sys.argv[1:])
     run(args)

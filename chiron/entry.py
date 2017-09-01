@@ -32,6 +32,9 @@ def main(arguments=sys.argv[1:]):
     parser_call.add_argument('-l','--segment_len',type = int,default = 300, help="Segment length to be divided into.")
     parser_call.add_argument('-j','--jump',type = int,default = 30,help = "Step size for segment")
     parser_call.add_argument('-t','--threads',type = int,default = 0,help = "Threads number")
+    parser_call.add_argument('--summary_stats', type=bool, default=False, help="Output summary stats for base-called data")
+    parser_call.add_argument('--reference_genome', help="Reference genome")
+
     parser_call.set_defaults(func=evaluation)
 
     #parser for 'extract' command
