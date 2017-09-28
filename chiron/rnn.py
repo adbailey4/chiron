@@ -33,13 +33,19 @@ def rnn_layers(x, seq_length, training, hidden_num=100, layer_num=3, class_n=5, 
     batch_size = lasth.get_shape().as_list()[0]
     max_time = lasth.get_shape().as_list()[1]
     with tf.variable_scope('rnn_fnn_layer'):
-        weight_out = tf.Variable(tf.truncated_normal([2, hidden_num], stddev=np.sqrt(2.0 / (2 * hidden_num))),
-                                 name='weights')
-        biases_out = tf.Variable(tf.zeros([hidden_num]), name='bias')
-        weight_class = tf.Variable(tf.truncated_normal([hidden_num, class_n], stddev=np.sqrt(2.0 / hidden_num)),
-                                   name='weights_class')
-        bias_class = tf.Variable(tf.zeros([class_n]), name='bias_class')
-        lasth_rs = tf.reshape(lasth, [batch_size, max_time, 2, hidden_num], name='lasth_rs')
+        # weight_out = tf.Variable(tf.truncated_normal([2, hidden_num], stddev=np.sqrt(2.0 / (2 * hidden_num))),
+                                 #name='weights')
+	weight_out = tf.get_variable(name="weights", shape=[2, hidden_num], initializer=tf.truncated_normal_initializer(stddev=np.sqrt(2.0/(2 * hidden_num))))
+        #biases_out = tf.Variable(tf.zeros([hidden_num]), name='bias')
+        biases_out = tf.get_variable(name="bias", shape=[hidden_num], initializer=tf.zeros_initializer)
+     
+	#weight_class = tf.Variable(tf.truncated_normal([hidden_num, class_n], stddev=np.sqrt(2.0 / hidden_num)),
+                                   #name='weights_class')
+        weight_class = tf.get_variable(name="weights_class", shape=[hidden_num, class_n], initializer=tf.truncated_normal_initializer(stddev=np.sqrt(2.0/(2 * hidden_num))))
+	#bias_class = tf.Variable(tf.zeros([class_n]), name='bias_class')
+        bias_class = tf.get_variable(name="bias_class", shape=[class_n], initializer=tf.zeros_initializer)
+
+	lasth_rs = tf.reshape(lasth, [batch_size, max_time, 2, hidden_num], name='lasth_rs')
         lasth_output = tf.nn.bias_add(tf.reduce_sum(tf.multiply(lasth_rs, weight_out), axis=2), biases_out,
                                       name='lasth_bias_add')
         lasth_output_rs = tf.reshape(lasth_output, [batch_size * max_time, hidden_num], name='lasto_rs')

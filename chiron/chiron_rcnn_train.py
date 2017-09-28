@@ -80,28 +80,30 @@ def train(valid_reads_num=100):
     tower_grads = []
     opt = tf.train.AdamOptimizer(FLAGS.step_rate)
     reuse = False
+    batch_sizes = [10,20,30,100]
+    sequence_lengths = [400, 300, 200, 100]
     if gpu_indexes:
         print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
-        with tf.variable_scope(tf.get_variable_scope()):
-            for i in list(gpu_indexes):
-                with tf.variable_scope("my_model", reuse=(len(gpu_indexes))>1):
-                    training = tf.placeholder(tf.bool)
-                    x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.sequence_len])
-                    seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
-                    y_indexs = tf.placeholder(tf.int64)
-                    y_values = tf.placeholder(tf.int32)
-                    y_shape = tf.placeholder(tf.int64)
-                    y = tf.SparseTensor(y_indexs, y_values, y_shape)
-                    with tf.device('/gpu:%d' % i):
-                        logits, ratio = inference(x, seq_length, training, reuse=reuse)
-                        # print(logits, ratio)
-                        ctc_loss = loss(logits, seq_length, y)
-                        tf.get_variable_scope().reuse_variables()
-                        reuse = True
-                        gradients = opt.compute_gradients(ctc_loss)
-                        tower_grads.append(gradients)
-                        # print(gradients)
-                        # print(len(gradients))
+        #with tf.variable_scope(tf.get_variable_scope()):
+	for index, gpu in enumerate(gpu_indexes):
+            with tf.variable_scope("my_model", reuse=reuse):
+                training = tf.placeholder(tf.bool)
+                x = tf.placeholder(tf.float32, shape=[batch_sizes[index], sequence_lengths[index]])
+                seq_length = tf.placeholder(tf.int32, shape=[batch_sizes[index]])
+                y_indexs = tf.placeholder(tf.int64)
+                y_values = tf.placeholder(tf.int32) 
+                y_shape = tf.placeholder(tf.int64)
+                y = tf.SparseTensor(y_indexs, y_values, y_shape)
+                with tf.device('/gpu:%d' % gpu):
+                    logits, ratio = inference(x, seq_length, training)#, reuse=reuse)
+                    # print(logits, ratio)
+                    ctc_loss = loss(logits, seq_length, y)
+                    #tf.get_variable_scope().reuse_variables()
+                    reuse = True
+                    gradients = opt.compute_gradients(ctc_loss)
+                    tower_grads.append(gradients)
+                    # print(gradients)
+                    print(len(gradients))
         grads = average_gradients(tower_grads)
     else:
         print("No GPU's available, using CPU for computation", file=sys.stderr)
@@ -138,9 +140,9 @@ def train(valid_reads_num=100):
     summary_writer = tf.summary.FileWriter(FLAGS.log_dir + FLAGS.model_name + '/summary/', sess.graph)
 
     train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer, alphabet=FLAGS.bases)
-    # train_ds1, valid_ds1 = read_raw_data_sets(FLAGS.data_dir, 400, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    # train_ds2, valid_ds2 = read_raw_data_sets(FLAGS.data_dir, 600, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    # train_ds3, valid_ds3 = read_raw_data_sets(FLAGS.data_dir, 1000, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+    train_ds1, valid_ds1 = read_raw_data_sets(FLAGS.data_dir, 400, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+    train_ds2, valid_ds2 = read_raw_data_sets(FLAGS.data_dir, 600, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+    train_ds3, valid_ds3 = read_raw_data_sets(FLAGS.data_dir, 1000, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
 
     for i in range(FLAGS.max_steps):
         batch_x, seq_len, batch_y = train_ds.next_batch(FLAGS.batch_size)
@@ -221,7 +223,7 @@ def run(args):
 if __name__ == "__main__":
     class Flags():
         def __init__(self):
-            self.home_dir = "/home/ubuntu/data/methylated_ecoli/training/"
+            self.home_dir = "/home/ubuntu/data/methylated_ecoli/100_reads/"
             self.data_dir = self.home_dir
             self.log_dir = '/home/ubuntu/logs'
             self.model_name = 'logscrnn3+3-sep27'
@@ -229,13 +231,13 @@ if __name__ == "__main__":
             # self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/'
             # self.model_name = 'DNA_default'
 
-            self.sequence_len = 600
+            self.sequence_len = 200
             self.batch_size = 50
             self.step_rate = 1e-3
-            self.max_steps = 100000
+            self.max_steps = 1
             self.k_mer = 1
             self.bases = 5
             self.retrain = False
-	    self.num_gpu = 1
+	    self.num_gpu = 4
 
     run(Flags())
