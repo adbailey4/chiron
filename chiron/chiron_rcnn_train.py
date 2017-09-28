@@ -15,7 +15,7 @@ import numpy as np
 from cnn import getcnnfeature
 # from cnn import getcnnlogit
 from rnn import rnn_layers
-from nanotensor.run_nanotensor import test_for_nvidia_gpu
+from nanotensor.run_nanotensor import test_for_nvidia_gpu, average_gradients
 import sys
 
 # from rnn import rnn_layers_one_direction
@@ -76,7 +76,7 @@ def prediction(logits, seq_length, label, top_paths=1):
 
 
 def train(valid_reads_num=100):
-    gpu_indexes = test_for_nvidia_gpu(4)
+    gpu_indexes = test_for_nvidia_gpu(FLAGS.num_gpu)
     tower_grads = []
     opt = tf.train.AdamOptimizer(FLAGS.step_rate)
     reuse = False
@@ -215,27 +215,27 @@ def train(valid_reads_num=100):
 def run(args):
     global FLAGS
     FLAGS = args
-    train(valid_reads_num=10)
+    train(valid_reads_num=300)
 
 
 if __name__ == "__main__":
     class Flags():
         def __init__(self):
-            self.home_dir = "//Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
+            self.home_dir = "/home/ubuntu/data/methylated_ecoli/training/"
             self.data_dir = self.home_dir
-            self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard/'
+            self.log_dir = '/home/ubuntu/logs'
             self.model_name = 'logscrnn3+3-sep27'
 
             # self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/'
             # self.model_name = 'DNA_default'
 
-            self.sequence_len = 300
-            self.batch_size = 10
+            self.sequence_len = 600
+            self.batch_size = 50
             self.step_rate = 1e-3
-            self.max_steps = 1
+            self.max_steps = 100000
             self.k_mer = 1
             self.bases = 5
             self.retrain = False
-
+	    self.num_gpu = 1
 
     run(Flags())
