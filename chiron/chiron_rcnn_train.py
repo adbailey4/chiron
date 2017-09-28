@@ -31,7 +31,7 @@ def inference(x, seq_length, training, reuse=False):
     # print(type(FLAGS.sequence_len))
     ratio = FLAGS.sequence_len / feashape[1]
     # print("ratio", ratio)
-    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=4 ** FLAGS.k_mer + 1, reuse=reuse)
+    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=FLAGS.bases ** FLAGS.k_mer + 1, reuse=reuse)
     #    logits = rnn_layers_one_direction(cnn_feature,seq_length/ratio,training,class_n = 4**FLAGS.k_mer+1 )
     #    logits = getcnnlogit(cnn_feature)
     return logits, ratio
@@ -80,30 +80,46 @@ def train(valid_reads_num=100):
     tower_grads = []
     opt = tf.train.AdamOptimizer(FLAGS.step_rate)
     reuse = False
-    print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
-    with tf.variable_scope(tf.get_variable_scope()):
-        for i in list(gpu_indexes):
-            training = tf.placeholder(tf.bool)
-            x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.sequence_len])
-            seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
-            y_indexs = tf.placeholder(tf.int64)
-            y_values = tf.placeholder(tf.int32)
-            y_shape = tf.placeholder(tf.int64)
-            y = tf.SparseTensor(y_indexs, y_values, y_shape)
-            with tf.device('/gpu:%d' % i):
-                logits, ratio = inference(x, seq_length, training, reuse=reuse)
-                # print(logits, ratio)
-                ctc_loss = loss(logits, seq_length, y)
-                tf.get_variable_scope().reuse_variables()
-                reuse = True
-                gradients = opt.compute_gradients(ctc_loss)
-                tower_grads.append(gradients)
-                # print(gradients)
-                # print(len(gradients))
-    grads = average_gradients(tower_grads)
+    if gpu_indexes:
+        print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
+        with tf.variable_scope(tf.get_variable_scope()):
+            for i in list(gpu_indexes):
+                with tf.variable_scope("my_model", reuse=(len(gpu_indexes))>1):
+                    training = tf.placeholder(tf.bool)
+                    x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.sequence_len])
+                    seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
+                    y_indexs = tf.placeholder(tf.int64)
+                    y_values = tf.placeholder(tf.int32)
+                    y_shape = tf.placeholder(tf.int64)
+                    y = tf.SparseTensor(y_indexs, y_values, y_shape)
+                    with tf.device('/gpu:%d' % i):
+                        logits, ratio = inference(x, seq_length, training, reuse=reuse)
+                        # print(logits, ratio)
+                        ctc_loss = loss(logits, seq_length, y)
+                        tf.get_variable_scope().reuse_variables()
+                        reuse = True
+                        gradients = opt.compute_gradients(ctc_loss)
+                        tower_grads.append(gradients)
+                        # print(gradients)
+                        # print(len(gradients))
+        grads = average_gradients(tower_grads)
+    else:
+        print("No GPU's available, using CPU for computation", file=sys.stderr)
+        training = tf.placeholder(tf.bool)
+        x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.sequence_len])
+        seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
+        y_indexs = tf.placeholder(tf.int64)
+        y_values = tf.placeholder(tf.int32)
+        y_shape = tf.placeholder(tf.int64)
+        y = tf.SparseTensor(y_indexs, y_values, y_shape)
+        logits, ratio = inference(x, seq_length, training, reuse=False)
+        # print(logits, ratio)
+        ctc_loss = loss(logits, seq_length, y)
+        grads = opt.compute_gradients(ctc_loss)
 
 
-    train_op = opt.apply_gradients(grads, global_step=self.global_step)
+
+    train_op = opt.apply_gradients(grads)
 
     # print(logits, ratio)
     error, predict_greedy, predict, tmp_d = prediction(logits, seq_length, y)
@@ -121,10 +137,10 @@ def train(valid_reads_num=100):
         print("Model loaded finished, begin loading data. \n")
     summary_writer = tf.summary.FileWriter(FLAGS.log_dir + FLAGS.model_name + '/summary/', sess.graph)
 
-    train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    train_ds1, valid_ds1 = read_raw_data_sets(FLAGS.data_dir, 400, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    train_ds2, valid_ds2 = read_raw_data_sets(FLAGS.data_dir, 600, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    train_ds3, valid_ds3 = read_raw_data_sets(FLAGS.data_dir, 1000, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+    train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer, alphabet=FLAGS.bases)
+    # train_ds1, valid_ds1 = read_raw_data_sets(FLAGS.data_dir, 400, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+    # train_ds2, valid_ds2 = read_raw_data_sets(FLAGS.data_dir, 600, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+    # train_ds3, valid_ds3 = read_raw_data_sets(FLAGS.data_dir, 1000, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
 
     for i in range(FLAGS.max_steps):
         batch_x, seq_len, batch_y = train_ds.next_batch(FLAGS.batch_size)
@@ -138,7 +154,7 @@ def train(valid_reads_num=100):
         # print("logits_val", logits_val)
         # print("logits_val_shape", logits_val.shape)
         # print(np.argmax(logits_val, axis=2))
-        answers = np.nonzero(np.negative(np.argmax(logits_val, axis=2)-4))
+        # answers = np.nonzero(np.negative(np.argmax(logits_val, axis=2)-4))
         # print("argmax", np.argmax(logits_val, axis=2))
         # print("argmax-4", np.argmax(logits_val, axis=2)-4)
         # print("npnegative-4",np.negative(np.argmax(logits_val, axis=2)-4))
@@ -168,22 +184,24 @@ def train(valid_reads_num=100):
         # print(c_bpread)
         if i % 10 == 0:
             valid_x, valid_len, valid_y = valid_ds.next_batch(FLAGS.batch_size)
-            print(valid_len)
-            print(valid_y)
+            # print(valid_len)
+            # print(valid_y)
             indxs, values, shape = valid_y
             # print(tf.shape(valid_x))
             # print(tf.shape(valid_y))
             # print(values)
             feed_dict = {x: valid_x, seq_length: valid_len / ratio, y_indexs: indxs, y_values: values, y_shape: shape,
                          training: True}
-            error_val, predict_val, tmp_d_val, predict_greedy_val = sess.run([error, predict, tmp_d, predict_greedy], feed_dict=feed_dict)
-            print("Epoch %d, batch number %d, loss: %5.3f edit_distance: %5.3f" \
-                  % (train_ds.epochs_completed, train_ds.index_in_epoch, loss_val, error_val))
-            print("predict_val", predict_val)
-            # print("predict_greedy_val", predict_greedy_val)
-            print("tf.to_int32(predict_val[i])", tf.to_int32(predict_val[0][0]))
-
-            print("tmp_d_val", tmp_d_val)
+            error_val = sess.run([error], feed_dict=feed_dict)
+            # print(loss_val)
+            # print(error_val)
+            print("Epoch %d, batch number %d, loss: %5.3f edit_distance: %5.3f"
+                  % (train_ds.epochs_completed, train_ds.index_in_epoch, loss_val, error_val[0]))
+            # print("predict_val", predict_val)
+            # # print("predict_greedy_val", predict_greedy_val)
+            # print("tf.to_int32(predict_val[i])", tf.to_int32(predict_val[0][0]))
+            #
+            # print("tmp_d_val", tmp_d_val)
 
 
             saver.save(sess, FLAGS.log_dir + FLAGS.model_name + '/model.ckpt', i)
@@ -203,10 +221,10 @@ def run(args):
 if __name__ == "__main__":
     class Flags():
         def __init__(self):
-            self.home_dir = "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/"
+            self.home_dir = "//Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
             self.data_dir = self.home_dir
             self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard/'
-            self.model_name = 'logscrnn5+5-sep15'
+            self.model_name = 'logscrnn3+3-sep27'
 
             # self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/'
             # self.model_name = 'DNA_default'
@@ -216,7 +234,8 @@ if __name__ == "__main__":
             self.step_rate = 1e-3
             self.max_steps = 1
             self.k_mer = 1
-            self.retrain = True
+            self.bases = 5
+            self.retrain = False
 
 
     run(Flags())

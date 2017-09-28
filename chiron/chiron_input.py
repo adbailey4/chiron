@@ -141,7 +141,7 @@ def read_data_for_eval(file_path, start_index=0, step=20, seg_length=200):
     return evaluation
 
 
-def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0):
+def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0, alphabet=5):
     ###Read from raw data
     event = list()
     event_length = list()
@@ -154,9 +154,9 @@ def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0):
             file_pre = os.path.splitext(name)[0]
             f_signal = read_signal(data_dir + name)
             try:
-                f_label = read_label(data_dir + file_pre + '.label', skip_start=10, window_n=(k_mer - 1) / 2)
+                f_label = read_label(data_dir + file_pre + '.label', skip_start=10, window_n=(k_mer - 1) / 2, alphabet=alphabet)
             except:
-                sys.stdout.write("Read the label %s fail.Skipped." % (name))
+                sys.stdout.write("Read the label %s fail.Skipped.\n" % (name))
                 continue
 
             #            if seq_length<max(f_label.length):
@@ -190,7 +190,7 @@ def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0):
             file_count += 1
         #            print("Successfully read %d"%(file_count))
     # print("len(event)", len(event))
-    assert valid_reads_num < len(event), "Valid reads number bigger than the total reads number."
+    assert valid_reads_num < len(event), "Valid reads number bigger than the total reads number. {} !< {}".format(valid_reads_num, len(event))
     # print("len(event)", len(event))
     train_event = event[valid_reads_num:]
     train_event_length = event_length[valid_reads_num:]
@@ -222,7 +222,7 @@ def read_signal(file_path, normalize=True):
     return signal.tolist()
 
 
-def read_label(file_path, skip_start=10, window_n=0):
+def read_label(file_path, skip_start=10, window_n=0, alphabet=5):
     f_h = open(file_path, 'r')
     start = list()
     length = list()
@@ -233,7 +233,9 @@ def read_label(file_path, skip_start=10, window_n=0):
         skip_start = window_n
     for line in f_h:
         record = line.split()
-        all_base.append(base2ind(record[2]))
+        # if record[2] is 'N':
+        #     print("Its an N")
+        all_base.append(base2ind(record[2], alphabet_n=alphabet))
     f_h.seek(0, 0)  # Back to the start
     file_len = len(all_base)
     for count, line in enumerate(f_h):
@@ -312,15 +314,15 @@ def batch2sparse(label_batch):
 def base2ind(base, alphabet_n=4, base_n=1):
     """base to 1-hot vector,
     Input Args:
-        base: current base,can be AGCT, or AGCTX for methylation.
+        base: current base,can be AGCT, or AGCTE for methylation.
         alphabet_n: can be 4 or 5, related to normal DNA or methylation call.
         """
     if alphabet_n == 4:
         Alphabeta = ['A', 'C', 'G', 'T']
         alphabeta = ['a', 'c', 'g', 't']
     elif alphabet_n == 5:
-        Alphabeta = ['A', 'C', 'G', 'T', 'X']
-        alphabeta = ['a', 'c', 'g', 't', 'x']
+        Alphabeta = ['A', 'C', 'G', 'T', 'E']
+        alphabeta = ['a', 'c', 'g', 't', 'e']
     else:
         raise ValueError('Alphabet number should be 4 or 5.')
     if base.isdigit():
@@ -332,7 +334,7 @@ def base2ind(base, alphabet_n=4, base_n=1):
 
 
 def main():
-    Data_dir = "/home/haotianteng/UQ/deepBNS/data/test/raw/"
+    Data_dir = "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
     train, valid = read_raw_data_sets(Data_dir, seq_length=1000)
     for i in range(100):
         inputX, sequence_length, label = train.next_batch(10)
