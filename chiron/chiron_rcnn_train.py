@@ -15,7 +15,9 @@ import numpy as np
 from cnn import getcnnfeature
 # from cnn import getcnnlogit
 from rnn import rnn_layers
-from nanotensor.run_nanotensor import test_for_nvidia_gpu
+from nanotensor.run_nanotensor import test_for_nvidia_gpu, average_gradients
+from nanotensor.utils import merge_two_dicts
+
 import sys
 
 # from rnn import rnn_layers_one_direction
@@ -80,28 +82,39 @@ def train(valid_reads_num=100):
     tower_grads = []
     opt = tf.train.AdamOptimizer(FLAGS.step_rate)
     reuse = False
+    batch_sizes = [10, 20, 30, 100]
+    sequence_lengths = [400, 300, 200, 100]
+    feed_tensors = []
+    train_datasets = []
+    valid_datasets = []
     if gpu_indexes:
         print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
-        with tf.variable_scope(tf.get_variable_scope()):
-            for i in list(gpu_indexes):
-                with tf.variable_scope("my_model", reuse=(len(gpu_indexes))>1):
-                    training = tf.placeholder(tf.bool)
-                    x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.sequence_len])
-                    seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
-                    y_indexs = tf.placeholder(tf.int64)
-                    y_values = tf.placeholder(tf.int32)
-                    y_shape = tf.placeholder(tf.int64)
-                    y = tf.SparseTensor(y_indexs, y_values, y_shape)
-                    with tf.device('/gpu:%d' % i):
-                        logits, ratio = inference(x, seq_length, training, reuse=reuse)
-                        # print(logits, ratio)
-                        ctc_loss = loss(logits, seq_length, y)
-                        tf.get_variable_scope().reuse_variables()
-                        reuse = True
-                        gradients = opt.compute_gradients(ctc_loss)
-                        tower_grads.append(gradients)
-                        # print(gradients)
-                        # print(len(gradients))
+        assert len(batch_sizes) == len(sequence_lengths)
+        for index, gpu in enumerate(gpu_indexes):
+            with tf.variable_scope("my_model", reuse=reuse):
+                training = tf.placeholder(tf.bool)
+                x = tf.placeholder(tf.float32, shape=[batch_sizes[index], sequence_lengths[index]])
+                seq_length = tf.placeholder(tf.int32, shape=[batch_sizes[index]])
+                y_indexs = tf.placeholder(tf.int64)
+                y_values = tf.placeholder(tf.int32)
+                y_shape = tf.placeholder(tf.int64)
+                feed_tensors.append([x, seq_length, y_indexs, y_values, y_shape, training])
+                y = tf.SparseTensor(y_indexs, y_values, y_shape)
+                train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, sequence_lengths[index],
+                                                        valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer,
+                                                        alphabet=FLAGS.bases)
+                train_datasets.append(train_ds)
+                valid_datasets.append(valid_ds)
+                with tf.device('/gpu:%d' % gpu):
+                    logits, ratio = inference(x, seq_length, training)#, reuse=reuse)
+                    # print(logits, ratio)
+                    ctc_loss = loss(logits, seq_length, y)
+                    #tf.get_variable_scope().reuse_variables()
+                    reuse = True
+                    gradients = opt.compute_gradients(ctc_loss)
+                    tower_grads.append(gradients)
+                    # print(gradients)
+                    print(len(gradients))
         grads = average_gradients(tower_grads)
     else:
         print("No GPU's available, using CPU for computation", file=sys.stderr)
@@ -116,6 +129,9 @@ def train(valid_reads_num=100):
         # print(logits, ratio)
         ctc_loss = loss(logits, seq_length, y)
         grads = opt.compute_gradients(ctc_loss)
+        print("Begin Loading Data. \n", file=sys.stderr)
+
+        train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer, alphabet=FLAGS.bases)
 
 
 
@@ -131,79 +147,39 @@ def train(valid_reads_num=100):
     # save_model()
     if FLAGS.retrain == False:
         sess.run(init)
-        print("Model init finished, begin loading data. \n")
+        print("Model init finished. \n")
     else:
         saver.restore(sess, tf.train.latest_checkpoint(FLAGS.log_dir + FLAGS.model_name))
-        print("Model loaded finished, begin loading data. \n")
+        print("Model loaded finished. \n")
     summary_writer = tf.summary.FileWriter(FLAGS.log_dir + FLAGS.model_name + '/summary/', sess.graph)
 
-    train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer, alphabet=FLAGS.bases)
+    # train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer, alphabet=FLAGS.bases)
     # train_ds1, valid_ds1 = read_raw_data_sets(FLAGS.data_dir, 400, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
     # train_ds2, valid_ds2 = read_raw_data_sets(FLAGS.data_dir, 600, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
     # train_ds3, valid_ds3 = read_raw_data_sets(FLAGS.data_dir, 1000, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
 
     for i in range(FLAGS.max_steps):
-        batch_x, seq_len, batch_y = train_ds.next_batch(FLAGS.batch_size)
-        indxs, values, shape = batch_y
-        feed_dict = {x: batch_x, seq_length: seq_len / ratio, y_indexs: indxs, y_values: values, y_shape: shape,
-                     training: True}
+        if gpu_indexes:
+            feed_dict = create_feed_dict(feed_tensors, train_datasets, batch_sizes)
+        else:
+            batch_x, seq_len, batch_y = train_ds.next_batch(FLAGS.batch_size)
+            indxs, values, shape = batch_y
+            feed_dict = {x: batch_x, seq_length: seq_len / ratio, y_indexs: indxs, y_values: values, y_shape: shape,
+                        training: True}
         loss_val, _ = sess.run([ctc_loss, train_op], feed_dict=feed_dict)
-        # print("loss val", loss_val)
-        # # print(predict_greedy)
-        # print("batch_y", batch_y)
-        # print("logits_val", logits_val)
-        # print("logits_val_shape", logits_val.shape)
-        # print(np.argmax(logits_val, axis=2))
+
         # answers = np.nonzero(np.negative(np.argmax(logits_val, axis=2)-4))
-        # print("argmax", np.argmax(logits_val, axis=2))
-        # print("argmax-4", np.argmax(logits_val, axis=2)-4)
-        # print("npnegative-4",np.negative(np.argmax(logits_val, axis=2)-4))
-        # print("answers", answers)
-        # print("Final?", (np.argmax(logits_val, axis=2)-4)[answers]+4)
-        # print("values", values)
-        # print("indxs", indxs)
-        # print("values", values)
-        # print("shape", shape)
-        # print("predict2", predict2)
-        # print("tmp_d_val", tmp_d_val)
-        # print(tf.edit_distance(predict2[0], tf.SparseTensor(indxs, values, shape)))
-        # predict_read = sparse2dense(predict_greedy2)[0]
-        # print("predict_read", predict_read)
-        # predict_read = sparse2dense(predict2)[0]
-        # # predict_read1 = sparse2dense(predict2)[0]
-        # # print("read_len", len(predict_read))
-        # print("predict_read", predict_read)
-
-        # print("predict_read1", len(predict_read1))
-        # print("predict_read", len(predict_read))
-
         # bpreads = [index2base(read) for read in predict_read]
         # print("bpreads", bpreads)
-        # concensus = simple_assembly(bpreads)
-        # c_bpread = index2base(np.argmax(concensus, axis=0))
-        # print(c_bpread)
-        if i % 10 == 0:
+
+        if i % 100 == 0:
             valid_x, valid_len, valid_y = valid_ds.next_batch(FLAGS.batch_size)
-            # print(valid_len)
-            # print(valid_y)
             indxs, values, shape = valid_y
-            # print(tf.shape(valid_x))
-            # print(tf.shape(valid_y))
-            # print(values)
             feed_dict = {x: valid_x, seq_length: valid_len / ratio, y_indexs: indxs, y_values: values, y_shape: shape,
                          training: True}
             error_val = sess.run([error], feed_dict=feed_dict)
-            # print(loss_val)
-            # print(error_val)
             print("Epoch %d, batch number %d, loss: %5.3f edit_distance: %5.3f"
                   % (train_ds.epochs_completed, train_ds.index_in_epoch, loss_val, error_val[0]))
-            # print("predict_val", predict_val)
-            # # print("predict_greedy_val", predict_greedy_val)
-            # print("tf.to_int32(predict_val[i])", tf.to_int32(predict_val[0][0]))
-            #
-            # print("tmp_d_val", tmp_d_val)
-
-
             saver.save(sess, FLAGS.log_dir + FLAGS.model_name + '/model.ckpt', i)
             summary_str = sess.run(summary, feed_dict=feed_dict)
             summary_writer.add_summary(summary_str, i)
@@ -211,6 +187,21 @@ def train(valid_reads_num=100):
 
     saver.save(sess, FLAGS.log_dir + FLAGS.model_name + '/final.ckpt')
 
+def create_feed_dict(tensor_list, datasets_list, batch_sizes, gpu_indexes):
+    """Create feed dictionary from list of tensors and data sets"""
+    feed_dict = {}
+    for index, batch_size in enumerate(batch_sizes):
+        dataset = datasets_list[index]
+        dataset.next_batch(batch_size)
+
+        batch_x, seq_len, batch_y = train_ds.next_batch(FLAGS.batch_size)
+        indxs, values, shape = batch_y
+        tensors = tensor_list[index]
+        dict1 = {tensors[0]: batch_x, tensors[1]: seq_len / ratio, tensors[2]: indxs, tensors[3]: values, tensors[4]: shape,
+                     tensors[5]: True}
+        feed_dict = merge_two_dicts(dict1, feed_dict)
+
+    return feed_dict
 
 def run(args):
     global FLAGS
