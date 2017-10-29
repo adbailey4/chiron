@@ -1,5 +1,8 @@
 #!/usr/bin/env python2
 # -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
 """
 Created on Sun Apr 30 11:59:15 2017
 
@@ -15,7 +18,12 @@ from cnn import getcnnfeature
 from rnn import rnn_layers
 from utils.unix_time import unix_time
 from nanotensor.chiron_data_prep import cat_files, align_to_reference, get_summary_alignment_stats
-from nanotensor.utils import list_dir
+from nanotensor.utils import list_dir, multiprocess_data, DotDict, merge_two_dicts
+from nanotensor.run_nanotensor import test_for_nvidia_gpu
+import math
+import threading
+import Queue
+
 
 def inference(x, seq_length, training):
     cnn_feature = getcnnfeature(x, training=training)
@@ -23,11 +31,10 @@ def inference(x, seq_length, training):
     ratio = FLAGS.segment_len / feashape[1]
     # ratio = int(ratio)
     # print("ratio", ratio)
-    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=6)
+    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=FLAGS.n_bases + 1)
     #    logits = rnn_layers_one_direction(cnn_feature,seq_length/ratio,training,class_n = 4**FLAGS.k_mer+1 )
     #    logits = getcnnlogit(cnn_feature)
     return logits, ratio
-
 
 
 def sparse2dense(predict_val):
@@ -51,7 +58,7 @@ def sparse2dense(predict_val):
 
 
 def index2base(read):
-    base = ['A', 'C', 'G', 'T', "E"]
+    base = ['A', 'C', 'G', 'T', 'E']
     bpread = [base[x] for x in read]
     bpread = ''.join(x for x in bpread)
     return bpread
@@ -68,17 +75,13 @@ def evaluation():
     config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=FLAGS.threads,
                             inter_op_parallelism_threads=FLAGS.threads)
     config.gpu_options.allow_growth = True
+
     with tf.Session(config=config) as sess:
         saver = tf.train.Saver()
+        # saver = tf.train.import_meta_graph('/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard
+        # /trained_data_chiron/final.ckpt.meta') saver.restore(sess,
+        # '/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard/trained_data_chiron/final.ckpt')
         saver.restore(sess, tf.train.latest_checkpoint(FLAGS.model))
-        if os.path.isdir(FLAGS.input):
-            # print("True", FLAGS.input)
-            file_list = os.listdir(FLAGS.input)
-            file_dir = FLAGS.input
-        else:
-            file_list = [os.path.basename(FLAGS.input)]
-            file_dir = os.path.abspath(os.path.join(FLAGS.input, os.path.pardir))
-        print(file_list)
         for name in file_list:
             start_time = time.time()
             if not name.endswith('.signal'):
@@ -87,13 +90,11 @@ def evaluation():
             input_path = os.path.join(file_dir, name)
             eval_data = read_data_for_eval(input_path, FLAGS.start, seg_length=FLAGS.segment_len, step=FLAGS.jump)
             reads_n = eval_data.reads_n
-            # print(reads_n)
+            print("reads_n in file = ", reads_n)
             reading_time = time.time() - start_time
             reads = list()
             # print(reads_n)
             for i in range(0, reads_n, FLAGS.batch_size):
-
-            # for i in range(0, reads_n, FLAGS.batch_size):
                 batch_x, seq_len, _ = eval_data.next_batch(FLAGS.batch_size, shuffle=False)
 
                 # print("batch_x before pad", tf.shape(batch_x), seq_len)
@@ -102,37 +103,20 @@ def evaluation():
                 # print("batch_x after pad", tf.shape(batch_x), seq_len)
                 # print(seq_len)
                 feed_dict = {x: batch_x, seq_length: seq_len, training: False}
-                predict_val, logits1 = sess.run([predict, logits], feed_dict=feed_dict)
-                # print(np.shape(logits1))
+                predict_val = sess.run([predict], feed_dict=feed_dict)[0]
 
-                # print("OG logits", logits1[0])
-                answers = np.nonzero(np.negative(np.argmax(logits1, axis=2)-4))
-                # print((np.argmax(logits1, axis=2)-4)[answers]+4)
-                # print("argmax logits", np.nonzero(np.negative(np.argmax(logits1, axis=2)-4)))
-
-                # print("transformed logits", logits2[0])
-                # print("transformed logits", logits2[1])
-                # print("prediction shape", np.shape(predict_val))
-                # print(predict_val)
-
-                # print("predict_val", predict_val)
                 predict_read = sparse2dense(predict_val)[0]
-                # print("predict_read", predict_read)
+
                 if i + FLAGS.batch_size > reads_n:
                     predict_read = predict_read[:reads_n - i]
                 reads += predict_read
             print("Segment reads base calling finished, begin to assembly. %5.2f seconds" % (time.time() - start_time))
-            # print("predict_read", predict_read)
             basecall_time = time.time() - start_time
-            # print("reads", reads)
 
             bpreads = [index2base(read) for read in reads]
-            # print("bpreads", bpreads)
 
             concensus = simple_assembly(bpreads)
-            # print("concensus", concensus)
             c_bpread = index2base(np.argmax(concensus, axis=0))
-            # print("c_bpread", c_bpread)
 
             assembly_time = time.time() - start_time
             print("Assembly finished, begin output. %5.2f seconds" % (time.time() - start_time))
@@ -164,25 +148,13 @@ def evaluation():
                 total_time = time.time() - start_time
                 out_meta.write("# Reading Basecalling assembly output total rate(bp/s)\n")
                 out_meta.write("%5.3f %5.3f %5.3f %5.3f %5.3f %5.3f\n" % (
-                reading_time, basecall_time, assembly_time, output_time, total_time, total_len / total_time))
+                    reading_time, basecall_time, assembly_time, output_time, total_time, total_len / total_time))
                 out_meta.write("# read_len batch_size segment_len jump start_pos\n")
                 out_meta.write(
                     "%d %d %d %d %d\n" % (total_len, FLAGS.batch_size, FLAGS.segment_len, FLAGS.jump, FLAGS.start))
                 out_meta.write("# input_name model_name\n")
                 out_meta.write("%s %s\n" % (FLAGS.input, FLAGS.model))
 
-    if FLAGS.summary_stats:
-        fasta_files = list_dir(result_folder, ext="fasta")
-        output = os.path.join(result_folder, "all_files.fasta")
-        path = cat_files(fasta_files, output)
-        bam = align_to_reference(path, FLAGS.reference_genome,
-                                 "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/test2.bam", threads=FLAGS.threads)
-        data = get_summary_alignment_stats(bam, FLAGS.reference_genome, report_all=True)
-        data_file = os.path.join(meta_folder, "alignment.meta")
-        with open(data_file, 'w+') as out_f:
-            out_f.write(data)
-
-# result_folder
 
 def run(args):
     global FLAGS
@@ -199,7 +171,7 @@ def run(args):
     with open(path_meta, 'a+') as out_meta:
         out_meta.write("# Wall_time Sys_time User_time Cpu_time\n")
         out_meta.write("%5.3f %5.3f %5.3f %5.3f\n" % (
-        time_dict['real'], time_dict['sys'], time_dict['user'], time_dict['sys'] + time_dict['user']))
+            time_dict['real'], time_dict['sys'], time_dict['user'], time_dict['sys'] + time_dict['user']))
 
 
 if __name__ == "__main__":
@@ -216,6 +188,7 @@ if __name__ == "__main__":
     parser.add_argument('-t', '--threads', type=int, default=0, help="Threads number")
     parser.add_argument('--summary_stats', type=bool, default=False, help="Output summary stats for base-called data")
     parser.add_argument('--reference_genome', help="Reference genome")
+    parser.add_argument('-n', '--n_bases', type=int, default=4, help="Number of bases")
 
     args = parser.parse_args(sys.argv[1:])
     run(args)

@@ -136,7 +136,7 @@ def get_label_raw(fast5_fn, basecall_group, basecall_subgroup):
     try:
         corr_data = fast5_data['/Analyses/RawGenomeCorrected_000/' + basecall_subgroup + '/Events']
         corr_attrs = dict(corr_data.attrs.items())
-        corr_data = corr_data .value
+        corr_data = corr_data.value
     except:
         raise RuntimeError, (
             'Corrected data know found.')
@@ -195,7 +195,7 @@ if __name__ == '__main__':
     fast5_fn = "/home/haotianteng/UQ/deepBNS/data/test/pass/test.fast5"
 
     basecall_subgroup = 'BaseCalled_template'
-    basecall_group = 'Basecall_1D_000';
+    basecall_group = 'Basecall_1D_000'
 
     #Get segment data
     (segment_label,first_segment, last_segment, total) = get_label_segment(fast5_fn, basecall_group, basecall_subgroup)
