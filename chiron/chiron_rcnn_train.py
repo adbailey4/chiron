@@ -212,7 +212,7 @@ def run(args):
 if __name__ == "__main__":
     class Flags():
         def __init__(self):
-            self.home_dir = "//Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
+            self.home_dir = "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
             self.data_dir = self.home_dir
             self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard/'
             self.model_name = 'logscrnn3+3-sep27'

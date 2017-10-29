@@ -1,2 +1,3 @@
-model_checkpoint_path: "model.ckpt-85520"
-all_model_checkpoint_paths: "model.ckpt-85520"
+model_checkpoint_path: "/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/DNA_default/final.ckpt"
+all_model_checkpoint_paths: "/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/DNA_default/model.ckpt-0"
+all_model_checkpoint_paths: "/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/DNA_default/final.ckpt"
