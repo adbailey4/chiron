@@ -16,6 +16,7 @@ from cnn import getcnnfeature
 # from cnn import getcnnlogit
 from rnn import rnn_layers
 from nanotensor.run_nanotensor import test_for_nvidia_gpu, average_gradients
+
 from nanotensor.utils import merge_two_dicts
 
 import sys
@@ -78,33 +79,25 @@ def prediction(logits, seq_length, label, top_paths=1):
 
 
 def train(valid_reads_num=100):
-    gpu_indexes = test_for_nvidia_gpu(4)
+    gpu_indexes = test_for_nvidia_gpu(FLAGS.num_gpu)
     tower_grads = []
     opt = tf.train.AdamOptimizer(FLAGS.step_rate)
     reuse = False
-    batch_sizes = [10, 20, 30, 100]
+    batch_sizes = [10,20,30,100]
     sequence_lengths = [400, 300, 200, 100]
-    feed_tensors = []
-    train_datasets = []
-    valid_datasets = []
     if gpu_indexes:
         print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
-        assert len(batch_sizes) == len(sequence_lengths)
-        for index, gpu in enumerate(gpu_indexes):
+        #with tf.variable_scope(tf.get_variable_scope()):
+	for index, gpu in enumerate(gpu_indexes):
             with tf.variable_scope("my_model", reuse=reuse):
                 training = tf.placeholder(tf.bool)
                 x = tf.placeholder(tf.float32, shape=[batch_sizes[index], sequence_lengths[index]])
                 seq_length = tf.placeholder(tf.int32, shape=[batch_sizes[index]])
                 y_indexs = tf.placeholder(tf.int64)
-                y_values = tf.placeholder(tf.int32)
+                y_values = tf.placeholder(tf.int32) 
                 y_shape = tf.placeholder(tf.int64)
-                feed_tensors.append([x, seq_length, y_indexs, y_values, y_shape, training])
                 y = tf.SparseTensor(y_indexs, y_values, y_shape)
-                train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, sequence_lengths[index],
-                                                        valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer,
-                                                        alphabet=FLAGS.bases)
-                train_datasets.append(train_ds)
-                valid_datasets.append(valid_ds)
+
                 with tf.device('/gpu:%d' % gpu):
                     logits, ratio = inference(x, seq_length, training)#, reuse=reuse)
                     # print(logits, ratio)
@@ -153,10 +146,7 @@ def train(valid_reads_num=100):
         print("Model loaded finished. \n")
     summary_writer = tf.summary.FileWriter(FLAGS.log_dir + FLAGS.model_name + '/summary/', sess.graph)
 
-    # train_ds, valid_ds = read_raw_data_sets(FLAGS.data_dir, FLAGS.sequence_len, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer, alphabet=FLAGS.bases)
-    # train_ds1, valid_ds1 = read_raw_data_sets(FLAGS.data_dir, 400, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    # train_ds2, valid_ds2 = read_raw_data_sets(FLAGS.data_dir, 600, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
-    # train_ds3, valid_ds3 = read_raw_data_sets(FLAGS.data_dir, 1000, valid_reads_num=valid_reads_num, k_mer=FLAGS.k_mer)
+
 
     for i in range(FLAGS.max_steps):
         if gpu_indexes:
@@ -206,7 +196,7 @@ def create_feed_dict(tensor_list, datasets_list, batch_sizes, gpu_indexes):
 def run(args):
     global FLAGS
     FLAGS = args
-    train(valid_reads_num=10)
+    train(valid_reads_num=300)
 
 
 if __name__ == "__main__":
@@ -214,19 +204,19 @@ if __name__ == "__main__":
         def __init__(self):
             self.home_dir = "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
             self.data_dir = self.home_dir
-            self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard/'
+            self.log_dir = '/home/ubuntu/logs'
             self.model_name = 'logscrnn3+3-sep27'
 
             # self.log_dir = '/Users/andrewbailey/CLionProjects/nanopore-RNN/chiron/chiron/model/'
             # self.model_name = 'DNA_default'
 
-            self.sequence_len = 300
-            self.batch_size = 10
+            self.sequence_len = 200
+            self.batch_size = 50
             self.step_rate = 1e-3
             self.max_steps = 1
             self.k_mer = 1
             self.bases = 5
             self.retrain = False
-
+	    self.num_gpu = 4
 
     run(Flags())

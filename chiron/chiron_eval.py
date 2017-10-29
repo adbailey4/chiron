@@ -65,103 +65,13 @@ def index2base(read):
 
 
 def evaluation():
-    gpu_indexes = test_for_nvidia_gpu(4)
-    feed_tensors = []
-    operations = []
-    reuse = False
-
-    if os.path.isdir(FLAGS.input):
-        # print("True", FLAGS.input)
-        file_list = os.listdir(FLAGS.input)
-        file_dir = FLAGS.input
-    else:
-        file_list = [os.path.basename(FLAGS.input)]
-        file_dir = os.path.abspath(os.path.join(FLAGS.input, os.path.pardir))
-
-    if gpu_indexes:
-        print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
-        # for index, gpu in enumerate(gpu_indexes):
-        arg_generator = eval_read_arg_generator(file_list, file_dir, gpu_indexes=gpu_indexes)
-        target = eval_wrapper
-        stop = threading.Event()
-        threads = []
-        for args in arg_generator:
-            # args = merge_two_dicts(arg, {"queue":workQueue})
-            t = threading.Thread(target=target, kwargs=args)
-            t.daemon = False  # thread will close when parent quits
-            t.start()
-            threads.append(t)
-
-            # for thread in threads:
-            # print(thread)
-            # thread.join()
-        print("WE got here")
-        # stop.set()
-        # print(workQueue.get())
-        # if not gpu_indexes:
-        #    for arg in arg_generator:
-        #       target(arg)
-        # else:
-        # num_workers = len(gpu_indexes)
-        # multiprocess_data(num_workers, target, arg_generator)
-
-    if FLAGS.summary_stats:
-        fasta_files = list_dir(result_folder, ext="fasta")
-        output = os.path.join(result_folder, "all_files.fasta")
-        path = cat_files(fasta_files, output)
-        bam_file = os.path.join(result_folder, "all_files.bam")
-
-        bam = align_to_reference(path, FLAGS.reference_genome,
-                                 bam_file, threads=FLAGS.threads)
-        data = get_summary_alignment_stats(bam, FLAGS.reference_genome, report_all=True)
-        data_file = os.path.join(meta_folder, "alignment.meta")
-        with open(data_file, 'w+') as out_f:
-            out_f.write(data)
-
-
-def eval_read_arg_generator(file_list, file_dir, gpu_indexes=None):
-    """Create arguments for the eval read function in order to multiprocess for multiple GPUs"""
-    if gpu_indexes:
-        # print("feed_tensors", feed_tensors)
-        # print("operations", operations)
-        n = int(math.ceil(len(file_list) / float(len(gpu_indexes))))
-        for i in range(0, len(file_list), n):
-            sub_list = file_list[i:i + n]
-            index = i / n
-            # print(index)
-            # sub_feed_tensors = feed_tensors[index * 3:index * 3 + 3]
-            # sub_ops = operations[index:index + 1]
-            # print("feedtensors", sub_feed_tensors)
-            yield dict(file_list=sub_list, file_dir=file_dir, gpu=gpu_indexes[index])
-    else:
-        yield dict(file_list=file_list, file_dir=file_dir, gpu=None)
-
-
-def eval_wrapper(file_list, file_dir, gpu):
-    try:
-        print("THIS PRINTED")
-        print(file_list)
-        eval_read(file_list, file_dir, gpu=gpu)
-        print("This finished", file=sys.stderr)
-    except:  # AttributeError as e:
-        e = sys.exc_info()
-        print(e)
-
-
-# result_folder
-def eval_read(file_list, file_dir, gpu=0):
-    """Eval read"""
+    x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.segment_len])
+    seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
+    training = tf.placeholder(tf.bool)
     with tf.variable_scope("my_model"):
-        x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.segment_len])
-        seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
-        training = tf.placeholder(tf.bool)
-        # feed_tensors.extend([x, seq_length, training])
-        with tf.device('/gpu:%d' % gpu):
-            logits, _ = inference(x, seq_length, training=training)
-            transpose_logits = tf.transpose(logits, perm=[1, 0, 2])
-            predict = tf.nn.ctc_greedy_decoder(transpose_logits, seq_length, merge_repeated=True)
-            # predict = tf.nn.ctc_beam_search_decoder(tf.transpose(logits,perm=[1,0,2]),seq_length,merge_repeated = False)#For beam_search_decoder, set the merge_repeated to false. 5-10 times slower than greedy decoder
-            # operations.extend([predict])
+        logits, _= inference(x, seq_length, training=training)
+        transpose_logits = tf.transpose(logits, perm=[1, 0, 2])
+        predict = tf.nn.ctc_greedy_decoder(transpose_logits, seq_length, merge_repeated=True)
     config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=FLAGS.threads,
                             inter_op_parallelism_threads=FLAGS.threads)
     config.gpu_options.allow_growth = True
@@ -184,8 +94,6 @@ def eval_read(file_list, file_dir, gpu=0):
             reading_time = time.time() - start_time
             reads = list()
             # print(reads_n)
-            # for i in range(0, 10, FLAGS.batch_size):
-
             for i in range(0, reads_n, FLAGS.batch_size):
                 batch_x, seq_len, _ = eval_data.next_batch(FLAGS.batch_size, shuffle=False)
 

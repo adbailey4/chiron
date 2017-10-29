@@ -151,6 +151,7 @@ def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0, alp
     file_count = 0
     for name in os.listdir(data_dir):
         if name.endswith(".signal"):
+	    print(name)
             file_pre = os.path.splitext(name)[0]
             f_signal = read_signal(data_dir + name)
             try:
@@ -213,10 +214,12 @@ def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0, alp
 
 def read_signal(file_path, normalize=True):
     f_h = open(file_path, 'r')
+    f_h.seek(0, 0)
     signal = list()
     for line in f_h:
         signal += [int(x) for x in line.split()]
     signal = np.asarray(signal)
+    #print("signal lenght", len(signal))
     if normalize:
         signal = (signal - np.mean(signal)) / np.std(signal)
     return signal.tolist()
@@ -224,6 +227,7 @@ def read_signal(file_path, normalize=True):
 
 def read_label(file_path, skip_start=10, window_n=0, alphabet=5):
     f_h = open(file_path, 'r')
+    f_h.seek(0, 0)
     start = list()
     length = list()
     base = list()
@@ -238,6 +242,7 @@ def read_label(file_path, skip_start=10, window_n=0, alphabet=5):
         all_base.append(base2ind(record[2], alphabet_n=alphabet))
     f_h.seek(0, 0)  # Back to the start
     file_len = len(all_base)
+    #print("len of allbases", file_len)
     for count, line in enumerate(f_h):
         record = line.split()
         if count < skip_start or count > (file_len - skip_start - 1):
