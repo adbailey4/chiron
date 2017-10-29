@@ -181,14 +181,14 @@ def getcnnfeature(signal, training):
         res2 = residual_layer(res1, out_channel=256, training=training)
     with tf.variable_scope('res_layer3'):
         res3 = residual_layer(res2, out_channel=256, training=training)
-    #    with tf.variable_scope('res_layer4'):
-    #        res4 = residual_layer(res3,out_channel = 512,training = training)
-    #    with tf.variable_scope('res_layer5'):
-    #        res5 = residual_layer(res4,out_channel = 512,training = training)
+    with tf.variable_scope('res_layer4'):
+        res4 = residual_layer(res3,out_channel = 512,training = training)
+    with tf.variable_scope('res_layer5'):
+        res5 = residual_layer(res4,out_channel = 512,training = training)
 
-    feashape = res3.get_shape().as_list()
+    feashape = res5.get_shape().as_list()
     print(feashape)
-    fea = tf.reshape(res3, [feashape[0], feashape[2], feashape[3]], name='fea_rs')
+    fea = tf.reshape(res5, [feashape[0], feashape[2], feashape[3]], name='fea_rs')
     print(fea)
     return fea
 

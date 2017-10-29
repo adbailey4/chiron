@@ -9,7 +9,7 @@ import numpy as np
 import difflib
 
 def simple_assembly(bpreads):
-    concensus = np.zeros([4,1000])
+    concensus = np.zeros([5,1000])
     pos = 0
     length = 0
     census_len = 1000
@@ -29,7 +29,7 @@ def simple_assembly(bpreads):
     return concensus[:,:length]
     
 def add_count(concensus,start_indx,segment):
-    base_dict = {'A':0,'C':1,'G':2,'T':3,'a':0,'c':1,'g':2,'t':3}
+    base_dict = {'A':0,'C':1,'G':2,'T':3,'E':4,'a':0,'c':1,'g':2,'t':3, 'e':4}
     if start_indx<0:
         segment = segment[-start_indx:]
         start_indx = 0

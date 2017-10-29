@@ -23,7 +23,7 @@ def inference(x, seq_length, training):
     ratio = FLAGS.segment_len / feashape[1]
     # ratio = int(ratio)
     # print("ratio", ratio)
-    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=5)
+    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=6)
     #    logits = rnn_layers_one_direction(cnn_feature,seq_length/ratio,training,class_n = 4**FLAGS.k_mer+1 )
     #    logits = getcnnlogit(cnn_feature)
     return logits, ratio
@@ -51,7 +51,7 @@ def sparse2dense(predict_val):
 
 
 def index2base(read):
-    base = ['A', 'C', 'G', 'T']
+    base = ['A', 'C', 'G', 'T', "E"]
     bpread = [base[x] for x in read]
     bpread = ''.join(x for x in bpread)
     return bpread
@@ -61,9 +61,10 @@ def evaluation():
     x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.segment_len])
     seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
     training = tf.placeholder(tf.bool)
-    logits, _= inference(x, seq_length, training=training)
-    transpose_logits = tf.transpose(logits, perm=[1, 0, 2])
-    predict = tf.nn.ctc_greedy_decoder(transpose_logits, seq_length, merge_repeated=True)
+    with tf.variable_scope("my_model"):
+        logits, _= inference(x, seq_length, training=training)
+        transpose_logits = tf.transpose(logits, perm=[1, 0, 2])
+        predict = tf.nn.ctc_greedy_decoder(transpose_logits, seq_length, merge_repeated=True)
     config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=FLAGS.threads,
                             inter_op_parallelism_threads=FLAGS.threads)
     config.gpu_options.allow_growth = True
@@ -90,7 +91,7 @@ def evaluation():
             reading_time = time.time() - start_time
             reads = list()
             # print(reads_n)
-            for i in range(0, 10, FLAGS.batch_size):
+            for i in range(0, reads_n, FLAGS.batch_size):
 
             # for i in range(0, reads_n, FLAGS.batch_size):
                 batch_x, seq_len, _ = eval_data.next_batch(FLAGS.batch_size, shuffle=False)
