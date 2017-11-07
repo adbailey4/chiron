@@ -1,0 +1,291 @@
+#!/usr/bin/env python2
+# -*- coding: utf-8 -*-
+
+from __future__ import print_function
+
+"""
+Created on Sun Apr 30 11:59:15 2017
+
+@author: haotianteng
+"""
+import argparse, os, time, sys
+import numpy as np
+import tensorflow as tf
+from chiron_input import read_data_for_eval
+from utils.easy_assembler import simple_assembly
+from cnn import getcnnfeature
+# from cnn import getcnnlogit
+from rnn import rnn_layers
+from utils.unix_time import unix_time
+from nanotensor.chiron_data_prep import cat_files, align_to_reference, get_summary_alignment_stats
+from nanotensor.utils import list_dir, multiprocess_data, DotDict, merge_two_dicts
+from nanotensor.run_nanotensor import test_for_nvidia_gpu
+import math
+import threading
+import Queue
+
+
+def inference(x, seq_length, training):
+    cnn_feature = getcnnfeature(x, training=training)
+    feashape = cnn_feature.get_shape().as_list()
+    ratio = FLAGS.segment_len / feashape[1]
+    # ratio = int(ratio)
+    # print("ratio", ratio)
+    logits = rnn_layers(cnn_feature, seq_length / ratio, training, class_n=FLAGS.n_bases + 1)
+    #    logits = rnn_layers_one_direction(cnn_feature,seq_length/ratio,training,class_n = 4**FLAGS.k_mer+1 )
+    #    logits = getcnnlogit(cnn_feature)
+    return logits, ratio
+
+
+def sparse2dense(predict_val):
+    predict_val_top5 = predict_val[0]
+    # print("predict_val_top5", predict_val_top5)
+    predict_read = list()
+    for i in range(len(predict_val_top5)):
+        predict_val = predict_val_top5[i]
+        unique, pre_counts = np.unique(predict_val.indices[:, 0], return_counts=True)
+        # print("UNIQUE, Precounts", unique, pre_counts, predict_val.indices[:, 0])
+        pos_predict = 0
+        predict_read_temp = list()
+        # print("predict_val.values", predict_val.values)
+        for indx, counts in enumerate(pre_counts):
+            # print(indx, pre_counts[indx], pos_predict)
+            # print(predict_val.values[pos_predict:pos_predict + pre_counts[indx]])
+            predict_read_temp.append(predict_val.values[pos_predict:pos_predict + pre_counts[indx]])
+            pos_predict += pre_counts[indx]
+        predict_read.append(predict_read_temp)
+    return predict_read
+
+
+def index2base(read):
+    base = ['A', 'C', 'G', 'T', 'E']
+    bpread = [base[x] for x in read]
+    bpread = ''.join(x for x in bpread)
+    return bpread
+
+
+def evaluation():
+    gpu_indexes = test_for_nvidia_gpu(4)
+    feed_tensors = []
+    operations = []
+    reuse = False
+    config = tf.ConfigProto(allow_soft_placement=True, intra_op_parallelism_threads=FLAGS.threads,
+                            inter_op_parallelism_threads=FLAGS.threads)
+    config.gpu_options.allow_growth = True
+
+    if os.path.isdir(FLAGS.input):
+        # print("True", FLAGS.input)
+        file_list = os.listdir(FLAGS.input)
+        file_dir = FLAGS.input
+    else:
+        file_list = [os.path.basename(FLAGS.input)]
+        file_dir = os.path.abspath(os.path.join(FLAGS.input, os.path.pardir))
+
+    if gpu_indexes:
+        print("Using GPU's {}".format(gpu_indexes), file=sys.stderr)
+        for index, gpu in enumerate(gpu_indexes):
+            with tf.variable_scope("my_model", reuse=reuse):
+                x = tf.placeholder(tf.float32, shape=[FLAGS.batch_size, FLAGS.segment_len])
+                seq_length = tf.placeholder(tf.int32, shape=[FLAGS.batch_size])
+                training = tf.placeholder(tf.bool)
+                reuse = True
+                feed_tensors.extend([x, seq_length, training])
+                with tf.device('/gpu:%d' % gpu):
+                    logits, _ = inference(x, seq_length, training=training)
+                    transpose_logits = tf.transpose(logits, perm=[1, 0, 2])
+                    predict = tf.nn.ctc_greedy_decoder(transpose_logits, seq_length, merge_repeated=True)
+                    # predict = tf.nn.ctc_beam_search_decoder(tf.transpose(logits,perm=[1,0,2]),seq_length,merge_repeated = False)#For beam_search_decoder, set the merge_repeated to false. 5-10 times slower than greedy decoder
+                    operations.extend([predict])
+
+    arg_generator = eval_read_arg_generator(file_list, file_dir, feed_tensors, operations, config, gpu_indexes=gpu_indexes)
+    target = eval_wrapper
+    stop = threading.Event()
+    threads = []
+    for args in arg_generator:
+        # args = merge_two_dicts(arg, {"queue":workQueue})
+        t = threading.Thread(target=target, kwargs=args)
+        t.daemon = False  # thread will close when parent quits
+        t.start()
+        threads.append(t)
+
+            # for thread in threads:
+            # print(thread)
+            # thread.join()
+        print("WE got here")
+        # stop.set()
+        # print(workQueue.get())
+        # if not gpu_indexes:
+        #    for arg in arg_generator:
+        #       target(arg)
+        # else:
+        # num_workers = len(gpu_indexes)
+        # multiprocess_data(num_workers, target, arg_generator)
+
+    if FLAGS.summary_stats:
+        fasta_files = list_dir(result_folder, ext="fasta")
+        output = os.path.join(result_folder, "all_files.fasta")
+        path = cat_files(fasta_files, output)
+        bam_file = os.path.join(result_folder, "all_files.bam")
+
+        bam = align_to_reference(path, FLAGS.reference_genome,
+                                 bam_file, threads=FLAGS.threads)
+        data = get_summary_alignment_stats(bam, FLAGS.reference_genome, report_all=True)
+        data_file = os.path.join(meta_folder, "alignment.meta")
+        with open(data_file, 'w+') as out_f:
+            out_f.write(data)
+
+
+def eval_read_arg_generator(file_list, file_dir, feed_tensors, operations, config, gpu_indexes=None):
+    """Create arguments for the eval read function in order to multiprocess for multiple GPUs"""
+    if gpu_indexes:
+        # print("feed_tensors", feed_tensors)
+        # print("operations", operations)
+        n = int(math.ceil(len(file_list) / float(len(gpu_indexes))))
+        for i in range(0, len(file_list), n):
+            sub_list = file_list[i:i + n]
+            index = i / n
+            # print(index)
+            sub_feed_tensors = feed_tensors[index * 3:index * 3 + 3]
+            sub_ops = operations[index:index + 1]
+            # print("feedtensors", sub_feed_tensors)
+            yield dict(file_list=sub_list, file_dir=file_dir, x=sub_feed_tensors[0], seq_length=sub_feed_tensors[1],
+                       training=sub_feed_tensors[2], predict=sub_ops[0], config=config)
+    else:
+        yield dict(file_list=file_list, file_dir=file_dir, x=feed_tensors[0], seq_length=feed_tensors[1],
+                   training=feed_tensors[2], predict=operations[0], config=config)
+
+
+def eval_wrapper(file_list, file_dir, x, seq_length, training, predict, config):
+    try:
+        print("THIS PRINTED")
+        print(file_list)
+        eval_read(file_list, file_dir, x, seq_length, training, predict, config)
+        print("This finished", file=sys.stderr)
+    except:  # AttributeError as e:
+        e = sys.exc_info()
+        print(e)
+
+
+# result_folder
+def eval_read(file_list, file_dir, x, seq_length, training, predict, config):
+    with tf.Session(config=config) as sess:
+        print("got here")
+	saver = tf.train.Saver()
+	print("saved")
+        # saver = tf.train.import_meta_graph('/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard
+        # /trained_data_chiron/final.ckpt.meta') saver.restore(sess,
+        # '/Users/andrewbailey/CLionProjects/nanopore-RNN/tensorboard/trained_data_chiron/final.ckpt')
+        saver.restore(sess, tf.train.latest_checkpoint(FLAGS.model))
+        for name in file_list:
+            start_time = time.time()
+            if not name.endswith('.signal'):
+                continue
+            file_pre = os.path.splitext(name)[0]
+            input_path = os.path.join(file_dir, name)
+            eval_data = read_data_for_eval(input_path, FLAGS.start, seg_length=FLAGS.segment_len, step=FLAGS.jump)
+            reads_n = eval_data.reads_n
+            print("reads_n in file = ", reads_n)
+            reading_time = time.time() - start_time
+            reads = list()
+            # print(reads_n)
+            # for i in range(0, 10, FLAGS.batch_size):
+
+            for i in range(0, reads_n, FLAGS.batch_size):
+                batch_x, seq_len, _ = eval_data.next_batch(FLAGS.batch_size, shuffle=False)
+
+                # print("batch_x before pad", tf.shape(batch_x), seq_len)
+                batch_x = np.pad(batch_x, ((0, FLAGS.batch_size - len(batch_x)), (0, 0)), mode='constant')
+                seq_len = np.pad(seq_len, ((0, FLAGS.batch_size - len(seq_len))), mode='constant')
+                # print("batch_x after pad", tf.shape(batch_x), seq_len)
+                # print(seq_len)
+                feed_dict = {x: batch_x, seq_length: seq_len, training: False}
+                predict_val = sess.run([predict], feed_dict=feed_dict)
+
+                predict_read = sparse2dense(predict_val)[0]
+
+                if i + FLAGS.batch_size > reads_n:
+                    predict_read = predict_read[:reads_n - i]
+                reads += predict_read
+            print("Segment reads base calling finished, begin to assembly. %5.2f seconds" % (time.time() - start_time))
+            basecall_time = time.time() - start_time
+
+            bpreads = [index2base(read) for read in reads]
+
+            concensus = simple_assembly(bpreads)
+            c_bpread = index2base(np.argmax(concensus, axis=0))
+
+            assembly_time = time.time() - start_time
+            print("Assembly finished, begin output. %5.2f seconds" % (time.time() - start_time))
+            result_folder = os.path.join(FLAGS.output, 'result')
+            seg_folder = os.path.join(FLAGS.output, 'segments')
+            meta_folder = os.path.join(FLAGS.output, 'meta')
+            if not os.path.exists(FLAGS.output):
+                os.makedirs(FLAGS.output)
+            if not os.path.exists(seg_folder):
+                os.makedirs(seg_folder)
+            if not os.path.exists(result_folder):
+                os.makedirs(result_folder)
+            if not os.path.exists(meta_folder):
+                os.makedirs(meta_folder)
+            path_con = os.path.join(result_folder, file_pre + '.fasta')
+            path_reads = os.path.join(seg_folder, file_pre + '.fasta')
+            path_meta = os.path.join(meta_folder, file_pre + '.meta')
+            with open(path_reads, 'w+') as out_f, open(path_con, 'w+') as out_con:
+                for indx, read in enumerate(bpreads):
+                    out_f.write('>' + file_pre + str(indx) + '\n')
+                    out_f.write(read + '\n')
+                out_con.write(">{}\n{}\n".format(file_pre, c_bpread))
+            with open(path_meta, 'w+') as out_meta:
+                total_time = time.time() - start_time
+                output_time = total_time - assembly_time
+                assembly_time -= basecall_time
+                basecall_time -= reading_time
+                total_len = len(c_bpread)
+                total_time = time.time() - start_time
+                out_meta.write("# Reading Basecalling assembly output total rate(bp/s)\n")
+                out_meta.write("%5.3f %5.3f %5.3f %5.3f %5.3f %5.3f\n" % (
+                    reading_time, basecall_time, assembly_time, output_time, total_time, total_len / total_time))
+                out_meta.write("# read_len batch_size segment_len jump start_pos\n")
+                out_meta.write(
+                    "%d %d %d %d %d\n" % (total_len, FLAGS.batch_size, FLAGS.segment_len, FLAGS.jump, FLAGS.start))
+                out_meta.write("# input_name model_name\n")
+                out_meta.write("%s %s\n" % (FLAGS.input, FLAGS.model))
+
+
+def run(args):
+    global FLAGS
+    FLAGS = args
+    time_dict = unix_time(evaluation)
+    # print(FLAGS.output)
+    print('Real time:%5.3f Systime:%5.3f Usertime:%5.3f' % (time_dict['real'], time_dict['sys'], time_dict['user']))
+    meta_folder = os.path.join(FLAGS.output, 'meta')
+    if os.path.isdir(FLAGS.input):
+        file_pre = 'all'
+    else:
+        file_pre = os.path.splitext(os.path.basename(FLAGS.input))[0]
+    path_meta = os.path.join(meta_folder, file_pre + '.meta')
+    with open(path_meta, 'a+') as out_meta:
+        out_meta.write("# Wall_time Sys_time User_time Cpu_time\n")
+        out_meta.write("%5.3f %5.3f %5.3f %5.3f\n" % (
+            time_dict['real'], time_dict['sys'], time_dict['user'], time_dict['sys'] + time_dict['user']))
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(prog='chiron', description='A deep neural network basecaller.')
+    parser.add_argument('-i', '--input', default='example_data/output/raw',
+                        help="File path or Folder path to the fast5 file.")
+    parser.add_argument('-o', '--output', default='example_data/output', help="Output Folder name")
+    parser.add_argument('-m', '--model', default='model/crnn3+3_S10_2_re', help="model folder")
+    parser.add_argument('-s', '--start', type=int, default=0, help="Start index of the signal file.")
+    parser.add_argument('-b', '--batch_size', type=int, default=1100,
+                        help="Batch size for run, bigger batch_size will increase the processing speed but require larger RAM load")
+    parser.add_argument('-l', '--segment_len', type=int, default=300, help="Segment length to be divided into.")
+    parser.add_argument('-j', '--jump', type=int, default=30, help="Step size for segment")
+    parser.add_argument('-t', '--threads', type=int, default=0, help="Threads number")
+    parser.add_argument('--summary_stats', type=bool, default=False, help="Output summary stats for base-called data")
+    parser.add_argument('--reference_genome', help="Reference genome")
+    parser.add_argument('-n', '--n_bases', type=int, default=4, help="Number of bases")
+
+    args = parser.parse_args(sys.argv[1:])
+    run(args)
+
