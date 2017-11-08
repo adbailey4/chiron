@@ -269,6 +269,7 @@ def read_raw(raw_signal, raw_label, max_seq_length, short=False):
     current_length = 0
     current_label = []
     current_event = []
+    # print("READING RAW")
     for indx, segment_length in enumerate(raw_label.length):
         current_start = raw_label.start[indx]
         current_base = raw_label.base[indx]
@@ -276,9 +277,10 @@ def read_raw(raw_signal, raw_label, max_seq_length, short=False):
             current_event += raw_signal[current_start:current_start + segment_length]
             current_label.append(current_base)
             current_length += segment_length
-        elif indx == (len(raw_label.length)-1):
+        else:
+            # Save current event and label
             if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
-            # print(len(current_event))
+                # print(len(current_event))
                 current_event = padding(current_event, max_seq_length, raw_signal[
                                                                        current_start + segment_length:current_start + segment_length + max_seq_length])
                 event_val.append(current_event)
@@ -292,12 +294,16 @@ def read_raw(raw_signal, raw_label, max_seq_length, short=False):
             current_event = raw_signal[current_start:current_start + segment_length]
             current_length = segment_length
             current_label = [current_base]
-        else:
-            # Save current event and label
+
+        if indx == (len(raw_label.length)-1):
+            # print("last thing")
             if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
-                # print(len(current_event))
+                # print("last thing and added", len(current_label))
+
                 current_event = padding(current_event, max_seq_length, raw_signal[
-                                                                       current_start + segment_length:current_start + segment_length + max_seq_length])
+                                                                       current_start + segment_length:current_start +
+                                                                                                      segment_length +
+                                                                                                      max_seq_length])
                 event_val.append(current_event)
                 # print("current_event[:1]", current_event[:1])
                 # print(current_length)
