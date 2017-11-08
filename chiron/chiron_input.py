@@ -276,8 +276,8 @@ def read_raw(raw_signal, raw_label, max_seq_length, short=False):
             current_event += raw_signal[current_start:current_start + segment_length]
             current_label.append(current_base)
             current_length += segment_length
-        elif indx == (len(raw_label.length)-1) and short:
-            if current_length > (max_seq_length / 2) and len(current_label) >= 3:
+        elif indx == (len(raw_label.length)-1):
+            if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
             # print(len(current_event))
                 current_event = padding(current_event, max_seq_length, raw_signal[
                                                                        current_start + segment_length:current_start + segment_length + max_seq_length])
@@ -294,7 +294,7 @@ def read_raw(raw_signal, raw_label, max_seq_length, short=False):
             current_label = [current_base]
         else:
             # Save current event and label
-            if current_length > (max_seq_length / 2) and len(current_label) >= 3:
+            if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
                 # print(len(current_event))
                 current_event = padding(current_event, max_seq_length, raw_signal[
                                                                        current_start + segment_length:current_start + segment_length + max_seq_length])
