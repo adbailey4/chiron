@@ -110,6 +110,9 @@ class DataSet(object):
             label_batch = self._label[start:end]
         if not self._for_eval:
             # print("label_batch", label_batch)
+            # print(label_batch)
+            # print(label_batch[0])
+            # print(batch2sparse(label_batch))
             label_batch = batch2sparse(label_batch)
             # print("sparse label_batch", label_batch)
         seq_length = event_batch[:, 1].astype(np.int32)
@@ -151,16 +154,17 @@ def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0, alp
     file_count = 0
     for name in os.listdir(data_dir):
         if name.endswith(".signal"):
-	    print(name)
+            print(name)
             file_pre = os.path.splitext(name)[0]
             f_signal = read_signal(data_dir + name)
             try:
-                f_label = read_label(data_dir + file_pre + '.label', skip_start=10, window_n=(k_mer - 1) / 2, alphabet=alphabet)
+                f_label = read_label(data_dir + file_pre + '.label', skip_start=10, window_n=(k_mer - 1) / 2,
+                                     alphabet=alphabet)
             except:
                 sys.stdout.write("Read the label %s fail.Skipped.\n" % (name))
                 continue
 
-            #            if seq_length<max(f_label.length):
+            # if seq_length<max(f_label.length):
             #                print("Sequence length %d is samller than the max raw segment length %d, give a bigger seq_length"\
             #                                 %(seq_length,max(f_label.length)))
             #                l_indx = range(len(f_label.length))
@@ -189,9 +193,10 @@ def read_raw_data_sets(data_dir, seq_length=200, k_mer=1, valid_reads_num=0, alp
                 else:
                     sys.stdout.write("%d lines read.   \n" % (count))
             file_count += 1
-        #            print("Successfully read %d"%(file_count))
+            #            print("Successfully read %d"%(file_count))
     # print("len(event)", len(event))
-    assert valid_reads_num < len(event), "Valid reads number bigger than the total reads number. {} !< {}".format(valid_reads_num, len(event))
+    assert valid_reads_num < len(event), "Valid reads number bigger than the total reads number. {} !< {}".format(
+        valid_reads_num, len(event))
     # print("len(event)", len(event))
     train_event = event[valid_reads_num:]
     train_event_length = event_length[valid_reads_num:]
@@ -219,7 +224,7 @@ def read_signal(file_path, normalize=True):
     for line in f_h:
         signal += [int(x) for x in line.split()]
     signal = np.asarray(signal)
-    #print("signal lenght", len(signal))
+    # print("signal lenght", len(signal))
     if normalize:
         signal = (signal - np.mean(signal)) / np.std(signal)
     return signal.tolist()
@@ -242,7 +247,7 @@ def read_label(file_path, skip_start=10, window_n=0, alphabet=5):
         all_base.append(base2ind(record[2], alphabet_n=alphabet))
     f_h.seek(0, 0)  # Back to the start
     file_len = len(all_base)
-    #print("len of allbases", file_len)
+    # print("len of allbases", file_len)
     for count, line in enumerate(f_h):
         record = line.split()
         if count < skip_start or count > (file_len - skip_start - 1):
@@ -256,7 +261,7 @@ def read_label(file_path, skip_start=10, window_n=0, alphabet=5):
     return raw_labels(start=start, length=length, base=base)
 
 
-def read_raw(raw_signal, raw_label, max_seq_length):
+def read_raw(raw_signal, raw_label, max_seq_length, short=False):
     label_val = list()
     label_length = list()
     event_val = list()
@@ -271,9 +276,25 @@ def read_raw(raw_signal, raw_label, max_seq_length):
             current_event += raw_signal[current_start:current_start + segment_length]
             current_label.append(current_base)
             current_length += segment_length
+        elif indx == (len(raw_label.length)-1) and short:
+            if current_length > (max_seq_length / 2) and len(current_label) >= 3:
+            # print(len(current_event))
+                current_event = padding(current_event, max_seq_length, raw_signal[
+                                                                       current_start + segment_length:current_start + segment_length + max_seq_length])
+                event_val.append(current_event)
+                # print("current_event[:1]", current_event[:1])
+                # print(current_length)
+                # print("bottom")
+                event_length.append(current_length)
+                label_val.append(current_label)
+                label_length.append(len(current_label))
+                # Begin a new event-label
+            current_event = raw_signal[current_start:current_start + segment_length]
+            current_length = segment_length
+            current_label = [current_base]
         else:
             # Save current event and label
-            if current_length > (max_seq_length / 2) and len(current_label) > 5:
+            if current_length > (max_seq_length / 2) and len(current_label) >= 3:
                 # print(len(current_event))
                 current_event = padding(current_event, max_seq_length, raw_signal[
                                                                        current_start + segment_length:current_start + segment_length + max_seq_length])
@@ -337,13 +358,53 @@ def base2ind(base, alphabet_n=4, base_n=1):
     else:
         return alphabeta.index(base)
 
+import tensorflow as tf
+
+def sparse_tensor_merge(indices, values, shape):
+    """Creates a SparseTensor from batched indices, values, and shapes.
+
+    Args:
+      indices: A [batch_size, N, D] integer Tensor.
+      values: A [batch_size, N] Tensor of any dtype.
+      shape: A [batch_size, D] Integer Tensor.
+    Returns:
+      A SparseTensor of dimension D + 1 with batch_size as its first dimension.
+    """
+    merged_shape = tf.reduce_max(shape, axis=0)
+    batch_size, elements, shape_dim = tf.unstack(tf.shape(indices))
+    index_range_tiled = tf.tile(tf.range(batch_size)[..., None],
+                                tf.stack([1, elements]))[..., None]
+    merged_indices = tf.reshape(
+        tf.concat([tf.cast(index_range_tiled, tf.int64), indices], axis=2),
+        [-1, 1 + tf.size(merged_shape)])
+    merged_values = tf.reshape(values, [-1])
+    return tf.SparseTensor(
+        merged_indices, merged_values,
+        tf.concat([[tf.cast(batch_size, tf.int64)], merged_shape], axis=0))
+
 
 def main():
-    Data_dir = "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
-    train, valid = read_raw_data_sets(Data_dir, seq_length=1000)
-    for i in range(100):
-        inputX, sequence_length, label = train.next_batch(10)
-        indxs, values, shape = label
+    # Data_dir = "/Users/andrewbailey/CLionProjects/nanopore-RNN/test_files/minion-reads/test_methylated/"
+    # train, valid = read_raw_data_sets(Data_dir, seq_length=1000)
+    # for i in range(1):
+    #     inputX, sequence_length, label = train.next_batch(10)
+    #     indxs, values, shape = label
+    #     # print(indxs, values, shape)
+    #
+    batch_indices = tf.constant(
+        [[[0, 0], [0, 1]],
+         [[0, 0], [0, 1], [0, 2]]], dtype=tf.int64)
+    batch_values = tf.constant(
+        [[0.1, 0.2],
+         [0.3, 0.4]])
+    batch_shapes = tf.constant(
+        [[2, 2],
+         [3, 2]], dtype=tf.int64)
+
+    merged = sparse_tensor_merge(batch_indices, batch_values, batch_shapes)
+
+    with tf.Session():
+        print(merged.eval())
 
 
 if __name__ == '__main__':
