@@ -261,7 +261,7 @@ def read_label(file_path, skip_start=10, window_n=0, alphabet=5):
     return raw_labels(start=start, length=length, base=base)
 
 
-def read_raw(raw_signal, raw_label, max_seq_length, short=False):
+def read_raw(raw_signal, raw_label, max_seq_length, short=False, max_event_length=100):
     label_val = list()
     label_length = list()
     event_val = list()
@@ -273,48 +273,53 @@ def read_raw(raw_signal, raw_label, max_seq_length, short=False):
     for indx, segment_length in enumerate(raw_label.length):
         current_start = raw_label.start[indx]
         current_base = raw_label.base[indx]
-        if current_length + segment_length < max_seq_length:
-            current_event += raw_signal[current_start:current_start + segment_length]
-            current_label.append(current_base)
-            current_length += segment_length
+        if segment_length > max_event_length:
+            current_length = 0
+            current_label = []
+            current_event = []
         else:
-            # Save current event and label
-            if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
-                # print(len(current_event))
-                current_event = padding(current_event, max_seq_length, raw_signal[
-                                                                       current_start + segment_length:current_start + segment_length + max_seq_length])
-                event_val.append(current_event)
-                # print("current_event[:1]", current_event[:1])
-                # print(current_length)
-                # print("bottom")
-                event_length.append(current_length)
-                label_val.append(current_label)
-                label_length.append(len(current_label))
-                # Begin a new event-label
-            current_event = raw_signal[current_start:current_start + segment_length]
-            current_length = segment_length
-            current_label = [current_base]
+            if current_length + segment_length < max_seq_length:
+                current_event += raw_signal[current_start:current_start + segment_length]
+                current_label.append(current_base)
+                current_length += segment_length
+            else:
+                # Save current event and label
+                if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
+                    # print(len(current_event))
+                    current_event = padding(current_event, max_seq_length, raw_signal[
+                                                                           current_start + segment_length:current_start + segment_length + max_seq_length])
+                    event_val.append(current_event)
+                    # print("current_event[:1]", current_event[:1])
+                    # print(current_length)
+                    # print("bottom")
+                    event_length.append(current_length)
+                    label_val.append(current_label)
+                    label_length.append(len(current_label))
+                    # Begin a new event-label
+                current_event = raw_signal[current_start:current_start + segment_length]
+                current_length = segment_length
+                current_label = [current_base]
 
-        if indx == (len(raw_label.length)-1):
-            # print("last thing")
-            if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
-                # print("last thing and added", len(current_label))
+            if indx == (len(raw_label.length)-1):
+                # print("last thing")
+                if (current_length > (max_seq_length / 2) or short) and len(current_label) >= 3:
+                    # print("last thing and added", len(current_label))
 
-                current_event = padding(current_event, max_seq_length, raw_signal[
-                                                                       current_start + segment_length:current_start +
-                                                                                                      segment_length +
-                                                                                                      max_seq_length])
-                event_val.append(current_event)
-                # print("current_event[:1]", current_event[:1])
-                # print(current_length)
-                # print("bottom")
-                event_length.append(current_length)
-                label_val.append(current_label)
-                label_length.append(len(current_label))
-                # Begin a new event-label
-            current_event = raw_signal[current_start:current_start + segment_length]
-            current_length = segment_length
-            current_label = [current_base]
+                    current_event = padding(current_event, max_seq_length, raw_signal[
+                                                                           current_start + segment_length:current_start +
+                                                                                                          segment_length +
+                                                                                                          max_seq_length])
+                    event_val.append(current_event)
+                    # print("current_event[:1]", current_event[:1])
+                    # print(current_length)
+                    # print("bottom")
+                    event_length.append(current_length)
+                    label_val.append(current_label)
+                    label_length.append(len(current_label))
+                    # Begin a new event-label
+                current_event = raw_signal[current_start:current_start + segment_length]
+                current_length = segment_length
+                current_label = [current_base]
     return event_val, event_length, label_val, label_length
 
 
